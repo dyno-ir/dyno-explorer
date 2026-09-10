@@ -1,0 +1,122 @@
+# Dyno Explorer — build the wasm + static site, then deploy to GitHub Pages.
+#
+# Full pipeline:  submodules -> Emscripten SDK -> `make wasm` (CMake: slang +
+# in-process ABC + dyno-as-library) -> `make site` (esbuild bundle + copy wasm
+# into explorer/dist/) -> test -> deploy explorer/dist/.
+#
+# The static site is fully self-contained in explorer/dist/ (no network needed at
+# runtime), so GitHub Pages can serve it directly.
+#
+#   * push to main / manual run  -> build + test + deploy to Pages
+#   * pull_request               -> build + test only (no deploy)
+
+name: Build & deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: # manual rebuild from the Actions tab
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90 # ABC + slang + dyno wasm build is heavy
+
+    env:
+      EMSDK: ${{ github.workspace }}/emsdk
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
+      CCACHE_COMPRESS: "true"
+
+    steps:
+      # ---- 1. Checkout with all submodules (recursive: dyno -> slang/libfst) ----
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      # ---- 2. Node for the frontend bundle + test runners -----------------------
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # ---- 2b. ccache (persisted between runs; emscripten-compatible) -----------
+      - name: Install ccache
+        run: sudo apt-get update && sudo apt-get install -y ccache
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      # ---- 3. Emscripten SDK (cached) -------------------------------------------
+      - name: Restore Emscripten SDK cache
+        id: emsdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.EMSDK }}
+          key: emsdk-${{ runner.os }}-v1
+
+      - name: Install Emscripten SDK
+        if: steps.emsdk-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$EMSDK"
+          cd "$EMSDK"
+          ./emsdk install latest
+          ./emsdk activate latest
+
+      # ---- 4. Build the wasm module (slang + in-process ABC + dyno-as-library) ---
+      - name: Build wasm module
+        run: make wasm
+
+      # ---- 5. Build the static site (esbuild bundle + copy wasm into dist/) ------
+      - name: Build site
+        run: make site
+
+      # ---- 6. Run the dyno-sv wasm test suite ------------------------------------
+      - name: Test wasm module
+        run: make test
+
+      # ---- 7. Smoke-test a full compile through the in-process ABC techmap -------
+      - name: Smoke-test techmap
+        run: node tools/compile-test.mjs
+
+      # ---- 8. Upload the self-contained site for GitHub Pages --------------------
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: explorer/dist
+          retention-days: 3
+
+  deploy:
+    # Only deploy on main pushes and manual runs, never on PRs.
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

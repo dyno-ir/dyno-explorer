@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dyno Explorer</title>
+<link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="toolbar">
+      <span class="logo">Dyno<span class="logo-accent"> Explorer</span></span>
+
+      <label class="field"><span class="field-label">Mode</span>
+        <select id="mode-select">
+          <option value="sv" selected>SystemVerilog</option>
+          <option value="ir">Dyno-IR Design</option>
+          <option value="test">Dyno-IR Test</option>
+        </select>
+      </label>
+
+      <label class="field" id="pipeline-field"><span class="field-label">Pipeline</span>
+        <select id="pipeline-select"></select>
+      </label>
+
+      <div class="field extra-args" id="extra-args-field">
+        <span class="field-label">Extra args</span>
+        <input id="extra-args" class="extra-args" spellcheck="false"
+               placeholder="--debug" />
+        <span class="extra-args-wrap">
+        <span class="extra-args-help" tabindex="0" role="button"
+              aria-label="What can I put in Extra args?">❓</span>
+        <div class="extra-args-tip" role="tooltip">
+          Extra <code>dyno-sv</code> command-line args, applied on every run.
+          <ul>
+            <li><code>-h, --help</code>: print help</li>
+            <li><code>-d, --debug</code>: run passes in debug mode</li>
+            <li><code>--debug-passes=&lt;pass&gt;</code>: debug named passes (repeatable)</li>
+            <li><code>-X, --Xslang=&lt;arg&gt;</code>: slang args (repeatable)</li>
+            <li><code>--only=&lt;test&gt;</code>: only run listed tests (repeatable)</li>
+            <li><code>--print-after-all</code>: print IR after all passes (test mode only)</li>
+          </ul>
+        </div>
+        </span>
+      </div>
+
+      <button id="run-btn" class="btn run">▶ Run</button>
+      <span id="status" class="status"></span>
+      <span class="spacer"></span>
+      <button id="console-btn" class="btn subtle" title="Show/hide dyno stdout + stderr output">Console</button>
+      <button id="download-btn" class="btn subtle download" title="Download output">⭳</button>
+    </header>
+
+    <div id="main">
+      <div id="panes">
+        <div class="pane" id="input-pane">
+          <div class="pane-head">
+            <span id="input-title">Input: SystemVerilog</span>
+          </div>
+          <div id="input-editor" class="editor"></div>
+        </div>
+
+        <div id="split-1" class="splitter" title="Drag to resize"></div>
+
+        <div class="pane" id="script-pane" style="display:none">
+          <div class="pane-head">
+            <span>Dyno pass pipeline script</span>
+          </div>
+          <div id="script-editor" class="editor"></div>
+        </div>
+
+        <div id="split-2" class="splitter" title="Drag to resize" style="display:none"></div>
+
+        <div class="pane" id="output-pane">
+          <div class="pane-head">
+            <span>Output</span>
+            <label class="field locs-toggle" title="Toggle the source-location markers (hover links still work from the input pane)">
+              <input type="checkbox" id="show-locs" />
+              Show source locs
+            </label>
+            <label class="field out-stage">Stage
+              <select id="out-stage-select"></select>
+            </label>
+          </div>
+          <div id="output-editor" class="editor"></div>
+          <div id="graph-view" class="graph-view" style="display:none">
+            <div class="graph-toolbar">
+              <span id="graph-info" class="graph-info"></span>
+              <span class="spacer"></span>
+              <button id="graph-zoom-out" class="btn subtle" title="Zoom out">−</button>
+              <button id="graph-zoom-in" class="btn subtle" title="Zoom in">+</button>
+              <button id="graph-zoom-fit" class="btn subtle" title="Fit graph to view">Fit</button>
+              <button id="graph-zoom-1" class="btn subtle" title="Actual size">1:1</button>
+            </div>
+            <div id="graph-scroll" class="graph-scroll">
+              <div id="graph-svg-wrap" class="graph-svg-wrap"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="console-divider" class="splitter" title="Drag to resize console" style="display:none"></div>
+
+      <div id="console" class="console" style="display:none">
+        <div class="console-head">
+          <span class="console-title">Console</span>
+          <span class="spacer"></span>
+          <button id="console-close" class="btn subtle" title="Close console">✕</button>
+        </div>
+        <div id="console-body" class="console-body"></div>
+      </div>
+    </div>
+
+    <div id="errorbar" class="errorbar" style="display:none"></div>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

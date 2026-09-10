@@ -1,0 +1,395 @@
+// Generated presets. FLOW_DYNO is the contents of flow/flow.dyno.
+// Regenerate with: node scripts/gen-presets.mjs
+export const FLOW_DYNO = `EXPORT :symbol("flow_frontend"),                   %frontendFlow                   :?func
+EXPORT :symbol("flow_earlyCanonFlow"),           %earlyCanonFlow           :?func
+EXPORT :symbol("flow_synthCanonicalize"),        %synthCanonicalize        :?func
+EXPORT :symbol("flow_synthEarlyOpt"),            %synthEarlyOpt            :?func
+EXPORT :symbol("flow_synthLowerControlFlow"),    %synthLowerControlFlow    :?func
+EXPORT :symbol("flow_synthMemoryFFMuxHandling"), %synthMemoryFFMuxHandling :?func
+EXPORT :symbol("flow_synthLowerMemoryFF"),       %synthLowerMemoryFF       :?func
+EXPORT :symbol("flow_synthTechmap"),             %synthTechmap             :?func
+EXPORT :symbol("flow_completeFlow"),             %completeFlow             :?func
+
+// Frontend only: the SV input is already parsed by the harness, so this just
+// dumps the parsed design.
+FUNCTION_DEF %frontendFlow:func, :block {
+  meta.DUMP_PASS map("path": "post_frontend.dyno")
+}
+
+FUNCTION_DEF %earlyCanonFlow:func, :block {
+  // preprocessing, inlining
+  meta.FUNCTION_INLINE_PASS
+  meta.INST_COMBINE_PASS
+  meta.MODULE_INLINE_PASS
+  meta.EVAL_INIT_PROCS_PASS
+  meta.REMOVE_INIT_PROCS_PASS
+  meta.TRIGGER_DEDUPE_PASS
+
+  // early dedupe/simplification
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS map("differentBlocks": "0", "keepLoadStoreOrder": "1")
+  meta.INST_COMBINE_PASS
+
+  // process fusion & ssa construction
+  meta.SEQ_TO_COMB_PASS
+  meta.SSA_CONSTRUCT_PASS map("lowerAllDynamic": "0")
+
+  meta.PROCESS_LINEARIZE_PASS map("retainIODeps": "1", "retainInnerDeps": "1")
+  meta.SSA_CONSTRUCT_PASS map("lowerAllDynamic": "0")
+  meta.SSA_CONSTRUCT_PASS map("lowerAllDynamic": "0", "mode": "DEFERRED")
+
+  meta.INST_COMBINE_PASS
+  meta.LOAD_COALESCE_PASS
+  meta.INST_COMBINE_PASS
+
+  // canonicalize
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS map("keepRegs": "NAMED")
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS map("differentBlocks": "1", "keepLoadStoreOrder": "1")
+  meta.ORDER_INSTRS_PASS map("assertNoCircularDeps": "1", "moveStoresBeforeLoads": "0")
+  meta.INST_COMBINE_PASS
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS map("keepRegs": "NAMED")
+  meta.INST_COMBINE_PASS
+  meta.LOOP_SIMPLIFY_PASS
+  meta.DUMP_PASS map("path": "post_early_canon.dyno")
+}
+
+// Early synthesis: unroll loops, fuse processes, canonicalize
+FUNCTION_DEF %synthCanonicalize:func, :block {
+  // unroll loops, simplify
+  meta.LINEARIZE_CONTROL_FLOW_PASS map("flattenLoops": "1", "flattenMultiway": "0")
+
+  // SSA construct dynamically accesses regs
+  // (do this after unrolling loops so we better know access bounds)
+  meta.INST_COMBINE_PASS
+  meta.CHECK_PASS map("noLoops": "1")
+  meta.SSA_CONSTRUCT_PASS
+  meta.SSA_CONSTRUCT_PASS map("mode": "DEFERRED")
+
+  meta.PROCESS_LINEARIZE_PASS map("retainIODeps": "0", "retainInnerDeps": "0")
+  meta.SSA_CONSTRUCT_PASS
+  meta.LOAD_COALESCE_PASS
+  meta.INST_COMBINE_PASS
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS map("differentBlocks": "1")
+  meta.ORDER_INSTRS_PASS map("assertNoCircularDeps": "1", "moveStoresBeforeLoads": "0")
+  meta.INST_COMBINE_PASS
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS map("keepRegs": "NAMED")
+
+  // lower arith to ADD
+  meta.LOWER_OPS_PASS map(
+    "lowerMultiInputAdd"     : "0",
+    "lowerAddCompress"       : "0",
+    "lowerSimpleAdd"         : "0",
+    "lowerSub"               : "1",
+    "lowerMul"               : "1",
+    "lowerMultiInputBitwise" : "0",
+    "lowerEqualityICMP"      : "0",
+    "lowerOrderingICMP"      : "1",
+    "lowerWildcardCaseICMP"  : "0",
+    "lowerShift"             : "0",
+    "lowerInsert"            : "0",
+    "lowerExtract"           : "0",
+    "lowerOneHotMux"         : "0",
+  )
+  meta.INST_COMBINE_PASS
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  meta.ORDER_INSTRS_PASS map("assertNoCircularDeps": "1", "moveStoresBeforeLoads": "0")
+  meta.CHECK_PASS
+  meta.DUMP_PASS map("path": "post_canon.dyno")
+}
+
+FUNCTION_DEF %synthEarlyOpt:func, :block {
+  // share
+  meta.FUZZY_CSE_PASS
+  // todo: fuzzy CSE more ops
+  meta.ORDER_INSTRS_PASS map("assertNoCircularDeps": "1", "moveStoresBeforeLoads": "0")
+  meta.INST_COMBINE_PASS
+  meta.EARLY_SHARE_PASS map("opToShare": "op.ADD")
+  meta.EARLY_SHARE_PASS map("opToShare": "hw.SPLICE", "checkAllPairs": "1")
+  meta.EARLY_SHARE_PASS map("opToShare": "hw.INSERT", "checkAllPairs": "1")
+
+  meta.INST_COMBINE_PASS
+  meta.SSA_CONSTRUCT_PASS
+  meta.INST_COMBINE_PASS
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS map("keepRegs": "NAMED")
+
+  // merge processes created during share
+  meta.PROCESS_LINEARIZE_PASS map("retainIODeps": "0", "retainInnerDeps": "0")
+  meta.ORDER_INSTRS_PASS map("assertNoCircularDeps": "1", "moveStoresBeforeLoads": "1")
+  meta.SSA_CONSTRUCT_PASS
+  meta.LOAD_COALESCE_PASS
+  meta.INST_COMBINE_PASS
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  meta.ORDER_INSTRS_PASS map("assertNoCircularDeps": "1", "moveStoresBeforeLoads": "1")
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS map("keepRegs": "NAMED")
+  meta.CHECK_PASS
+  meta.DUMP_PASS map("path": "post_early_opt.dyno")
+
+}
+
+FUNCTION_DEF %synthLowerControlFlow:func, :block {
+  // flatten all remaining control flow
+  meta.LINEARIZE_CONTROL_FLOW_PASS map("flattenLoops": "1", "flattenMultiway": "1")
+  meta.CHECK_PASS
+  meta.SSA_CONSTRUCT_PASS
+  meta.LOAD_COALESCE_PASS
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  meta.INST_COMBINE_PASS
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS map("keepRegs": "NAMED")
+
+  // optimize, share
+  meta.INST_COMBINE_PASS
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  meta.FUZZY_CSE_PASS
+  meta.ORDER_INSTRS_PASS map("moveStoresBeforeLoads": "1")
+  meta.INST_COMBINE_PASS
+  meta.SSA_CONSTRUCT_PASS
+  meta.INST_COMBINE_PASS
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  meta.INST_COMBINE_PASS
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS map("keepRegs": "NAMED")
+  meta.DUMP_PASS map("path": "post_lower_cfg.dyno")
+}
+
+FUNCTION_DEF %synthMemoryFFMuxHandling:func, :block {
+  // memory inference
+  meta.SIMPLE_MEMORY_INFERENCE_PASS
+  // now we care about load store order again
+  meta.ORDER_INSTRS_PASS map("assertNoCircularDeps": "1")
+
+  meta.INST_COMBINE_PASS
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS map("keepRegs": "NAMED")
+
+
+  // flatten MUX trees
+  meta.MUX_TREE_FLATTEN_PASS
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  meta.FUZZY_CSE_PASS map("minSharedBitsForMerge": "1", "maxSharedBitsForMerge": "1", "opToShare": "op.AND")
+  meta.ORDER_INSTRS_PASS map("assertNoCircularDeps": "1")
+  meta.INST_COMBINE_PASS
+
+  // lower insert/extract
+  meta.LOWER_OPS_PASS map(
+    "lowerMultiInputAdd"     : "1",
+    "lowerAddCompress"       : "0",
+    "lowerSimpleAdd"         : "0",
+    "lowerSub"               : "1",
+    "lowerMul"               : "1",
+    "lowerMultiInputBitwise" : "0",
+    "lowerEqualityICMP"      : "1",
+    "lowerOrderingICMP"      : "1",
+    "lowerWildcardCaseICMP"  : "0",
+    "lowerShift"             : "1",
+    "lowerInsert"            : "1",
+    "lowerExtract"           : "1",
+    "lowerOneHotMux"         : "0",
+  )
+
+  // lift MUXs up the dep chain for reg partition
+  // (s.t. regs with e.g. concat input can be split)
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+
+  meta.INST_COMBINE_PASS
+  // dedicated pass to avoid squared behavior in instcombine
+  meta.MUX_TREE_FLATTEN_PASS
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+
+  meta.INST_COMBINE_PASS map("muxToOneHotMux": "1")
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS map("keepRegs": "NAMED")
+
+  meta.REGISTER_PARTITION_PASS
+  meta.PROCESS_LINEARIZE_PASS map("retainIODeps": "0", "retainInnerDeps": "0")
+
+  // flip flop inference
+  meta.INST_COMBINE_PASS map("muxToOneHotMux": "1")
+  meta.FLIP_FLOP_INFERENCE_PASS
+  meta.TRIGGER_DEDUPE_PASS
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  meta.INST_COMBINE_PASS map("muxToOneHotMux": "1")
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  meta.INST_COMBINE_PASS map("muxToOneHotMux": "1", "findFlipFlopEnables": "1", "findFlipFlopSyncResets": "1")
+  meta.DUMP_PASS map("path": "post_memory_mux.dyno")
+}
+
+FUNCTION_DEF %synthLowerMemoryFF:func, :block {
+  // load pre-parsed liberty
+
+  meta.PARSE_DYNO_PASS map("path": /*"xilinx/flipflops.dyno"*/"tools/dyno-opt/dyno-ir/sky130_fd_sc_hd.dyno", "newModulesActive": "0")
+  // load memories
+  meta.PARSE_DYNO_PASS map("path": /*"xilinx/memories.dyno"*/ "tools/dyno-opt/dyno-ir/example_memories.dyno", "newModulesActive": "0")
+  meta.POPULATE_INLINE_CACHES_PASS
+
+  // map memories
+  meta.MEMORY_MAPPING_PASS
+  // fix up possible wire forward references after mem map
+  meta.NETLIST_TO_PROC_PASS
+
+  // lower unmapped memories back to load/store (todo: lower before en)
+  meta.LOWER_MEM_ACCESS_PASS
+  // lower insert/extract
+  meta.LOWER_OPS_PASS map(
+    "lowerMultiInputAdd"     : "1",
+    "lowerAddCompress"       : "0",
+    "lowerSimpleAdd"         : "0",
+    "lowerSub"               : "1",
+    "lowerMul"               : "1",
+    "lowerMultiInputBitwise" : "0",
+    "lowerEqualityICMP"      : "1",
+    "lowerOrderingICMP"      : "1",
+    "lowerWildcardCaseICMP"  : "0",
+    "lowerShift"             : "1",
+    "lowerInsert"            : "1",
+    "lowerExtract"           : "1",
+    "lowerOneHotMux"         : "0",
+  )
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  // and map flip flops
+  meta.INST_COMBINE_PASS map("muxToOneHotMux": "1", "findFlipFlopEnables": "1", "findFlipFlopSyncResets": "1")
+  meta.FLIP_FLOP_INFERENCE_PASS
+
+  meta.CHECK_PASS
+
+  meta.INST_COMBINE_PASS map("muxToOneHotMux": "1", "muxToBitwise": "1")
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  meta.INST_COMBINE_PASS map("muxToOneHotMux": "1", "muxToBitwise": "1")
+  // can't keep named here, have to opt out unused FFs (todo: delete in FF inference)
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS
+
+  // map flip flops
+  meta.FLIP_FLOP_MAPPING_PASS
+
+  meta.MUX_TREE_FLATTEN_PASS // todo: instead gen one hot mux in flip flop mapping?
+  meta.TRIGGER_DEDUPE_PASS
+  meta.INST_COMBINE_PASS map("muxToOneHotMux": "1", "muxToBitwise": "1")
+
+  meta.ORDER_INSTRS_PASS  map("moveStoresBeforeLoads": "1")
+  meta.PROCESS_LINEARIZE_PASS map("retainIODeps": "0", "retainInnerDeps": "0")
+
+  meta.INST_COMBINE_PASS map("muxToOneHotMux": "1", "muxToBitwise": "1")
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  meta.SSA_CONSTRUCT_PASS
+  meta.INST_COMBINE_PASS map("muxToOneHotMux": "1", "muxToBitwise": "1")
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS map("keepRegs": "NAMED")
+  meta.DUMP_PASS map("path": "post_lower_memory.dyno")
+}
+
+FUNCTION_DEF %synthTechmap:func, :block {
+  meta.CHECK_PASS
+
+  // lower everything
+  meta.LOWER_OPS_PASS map(
+    "lowerMultiInputAdd"     : "1",
+    "lowerAddCompress"       : "1",
+    "lowerSimpleAdd"         : "1",
+    "lowerSub"               : "1",
+    "lowerMul"               : "1",
+    "lowerMultiInputBitwise" : "1",
+    "lowerEqualityICMP"      : "1",
+    "lowerOrderingICMP"      : "1",
+    "lowerWildcardCaseICMP"  : "1",
+    "lowerShift"             : "1",
+    "lowerInsert"            : "1",
+    "lowerExtract"           : "1",
+    "lowerOneHotMux"         : "1",
+  )
+
+  meta.CHECK_PASS
+
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  meta.INST_COMBINE_PASS
+    map("fuseCommutative": "0", "removeAssumes": "1", "boolExprSimplify": "0", "inferMuxs": "0", "muxToBitwise": "0")
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS map("keepRegs": "NAMED")
+
+  meta.CHECK_PASS
+
+  // AIG opt & techmap
+  meta.AIG_CONSTRUCT_PASS
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS map("keepRegs": "NAMED")
+
+  meta.ABC_PASS map("abcCmd":
+    [{read_blif aig.blif; read_lib -X sky130_fd_sc_hd__lpflow_inputiso1p_1
+      -X sky130_fd_sc_hd__lpflow_isobufsrc_1 -X sky130_fd_sc_hd__clkinv_1
+      -w \${liberty-path};
+      strash; &get -n; &fraig -x;
+      &put; scorr; dc2; dretime; strash;
+      &get -n; &dch -f; &nf; &put;
+      print_stats; write_blif
+      mapped.blif}],
+    "path": "sky130_fd_sc_hd__tt_025C_1v80.lib")
+
+
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS map("keepRegs": "NAMED")
+  meta.REMOVE_BUFFERS_PASS
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+
+  meta.ORDER_INSTRS_PASS map("assertNoCircularDeps": "0")
+  meta.NETLIST_TO_PROC_PASS
+
+  meta.INST_COMBINE_PASS
+    map("fuseCommutative": "0", "removeAssumes": "1", "boolExprSimplify": "0", "inferMuxs": "0", "muxToBitwise": "0")
+  meta.CONSTANT_MAPPING_PASS
+  meta.COMMON_SUBEXPRESSION_ELIMINATION_PASS
+  meta.INST_COMBINE_PASS
+    map("fuseCommutative": "0", "removeAssumes": "1", "boolExprSimplify": "0", "inferMuxs": "0", "muxToBitwise": "0")
+  meta.AGGRESSIVE_DEAD_CODE_ELIMINATION_PASS map("keepRegs": "NAMED")
+
+  meta.PROC_TO_NETLIST_PASS map("keepRegs": "1")
+  meta.DUMP_PASS map("path": "post_techmap.dyno")
+  meta.DUMP_DOT_PASS map("path": "post_techmap.dot")
+}
+
+
+FUNCTION_DEF %completeFlow:func, :block {
+  // Each flow_* function dumps its own post-stage file, so no explicit dumps here.
+  CALL %earlyCanonFlow
+  CALL %synthCanonicalize
+  CALL %synthEarlyOpt
+  CALL %synthLowerControlFlow
+  CALL %synthMemoryFFMuxHandling
+  CALL %synthLowerMemoryFF
+  CALL %synthTechmap
+}
+`;
+
+export const PRESETS = [
+  {
+    "key": "frontend",
+    "label": "frontend",
+    "runner": "CALL symbol(\"flow_frontend\")"
+  },
+  {
+    "key": "post_early_canon",
+    "label": "post_early_canon",
+    "runner": "CALL symbol(\"flow_earlyCanonFlow\")"
+  },
+  {
+    "key": "post_canon",
+    "label": "post_canon",
+    "runner": "CALL symbol(\"flow_earlyCanonFlow\")\nCALL symbol(\"flow_synthCanonicalize\")"
+  },
+  {
+    "key": "post_early_opt",
+    "label": "post_early_opt",
+    "runner": "CALL symbol(\"flow_earlyCanonFlow\")\nCALL symbol(\"flow_synthCanonicalize\")\nCALL symbol(\"flow_synthEarlyOpt\")"
+  },
+  {
+    "key": "post_lower_cfg",
+    "label": "post_lower_cfg",
+    "runner": "CALL symbol(\"flow_earlyCanonFlow\")\nCALL symbol(\"flow_synthCanonicalize\")\nCALL symbol(\"flow_synthEarlyOpt\")\nCALL symbol(\"flow_synthLowerControlFlow\")"
+  },
+  {
+    "key": "post_memory_mux",
+    "label": "post_memory_mux",
+    "runner": "CALL symbol(\"flow_earlyCanonFlow\")\nCALL symbol(\"flow_synthCanonicalize\")\nCALL symbol(\"flow_synthEarlyOpt\")\nCALL symbol(\"flow_synthLowerControlFlow\")\nCALL symbol(\"flow_synthMemoryFFMuxHandling\")"
+  },
+  {
+    "key": "post_lower_memory",
+    "label": "post_lower_memory",
+    "runner": "CALL symbol(\"flow_earlyCanonFlow\")\nCALL symbol(\"flow_synthCanonicalize\")\nCALL symbol(\"flow_synthEarlyOpt\")\nCALL symbol(\"flow_synthLowerControlFlow\")\nCALL symbol(\"flow_synthMemoryFFMuxHandling\")\nCALL symbol(\"flow_synthLowerMemoryFF\")"
+  },
+  {
+    "key": "post_techmap",
+    "label": "post_techmap",
+    "runner": "CALL symbol(\"flow_earlyCanonFlow\")\nCALL symbol(\"flow_synthCanonicalize\")\nCALL symbol(\"flow_synthEarlyOpt\")\nCALL symbol(\"flow_synthLowerControlFlow\")\nCALL symbol(\"flow_synthMemoryFFMuxHandling\")\nCALL symbol(\"flow_synthLowerMemoryFF\")\nCALL symbol(\"flow_synthTechmap\")\nDUMP_VERILOG_PASS map(\"fileName\": \"dump.v\")"
+  }
+];

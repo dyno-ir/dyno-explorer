@@ -1,0 +1,21 @@
+# Build outputs
+/build/
+/wasm/
+/wasm-sv/
+
+# Explorer frontend build / deps
+/explorer/dist
+/explorer/node_modules
+
+# Berkeley-ABC build artifact (built by CMake into the source tree)
+/third-party/abc/libabc.a
+
+# Misc
+*~
+.DS_store
+.clangd/
+.cache
+.vscode
+.*.sw?
+.sw?
+*.pyc

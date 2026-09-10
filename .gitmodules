@@ -1,0 +1,6 @@
+[submodule "dyno"]
+	path = dyno
+	url = https://github.com/dyno-ir/dyno.git
+[submodule "third-party/abc"]
+	path = third-party/abc
+	url = https://github.com/berkeley-abc/abc.git
