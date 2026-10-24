@@ -79,7 +79,7 @@ add_custom_command(
 add_custom_target(abc_lib DEPENDS ${ABC_LIB})
 
 # ---- dyno-sv-wasm -----------------------------------------------------------
-add_executable(dyno-sv-wasm tools/dyno-sv-wasm.cpp)
+add_executable(dyno-sv-wasm tools/dyno-sv-wasm.cpp dyno/tools/dyno-sv/lib/ParseVerilogPass.cpp)
 
 target_include_directories(dyno-sv-wasm PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/dyno/tools/dyno-sv/include
