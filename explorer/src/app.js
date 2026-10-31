@@ -1,5 +1,5 @@
 import * as monaco from "monaco-editor";
-import { FLOW_DYNO, PRESETS } from "./presets.js";
+import { PRESETS } from "./presets.js";
 import { renderDotGraph } from "./graph.js";
 import { PASS_DESCRIPTIONS, INSTR_DESCRIPTIONS } from "./tooltips.js";
 import "./styles.css";
@@ -153,12 +153,15 @@ TEST_SCRIPT :string("invert"), :block {
 }
 `;
 
-// The whole flow is shown (editable) and run via flow_completeFlow.
-const DEFAULT_SCRIPT =
-  "// Custom dyno pass pipeline. The full flow is shown below; edit it, or " +
-  "CALL a flow_* function.\n" +
-  FLOW_DYNO +
-  "\n\n// Run the complete flow:\nCALL symbol(\"flow_completeFlow\")\n";
+let flowSource = "";
+const LOADING_SCRIPT = "// Loading upstream flow.dyno…\n";
+
+function makeDefaultScript(flow) {
+  return "// Custom dyno pass pipeline. The full flow is shown below; edit it, or " +
+    "CALL a flow_* function.\n" +
+    flow +
+    "\n\n// Run the complete flow:\nCALL symbol(\"flow_completeFlow\")\n";
+}
 
 // ---- Editors --------------------------------------------------------------
 const inputEditor = monaco.editor.create($("input-editor"), {
@@ -170,7 +173,7 @@ const inputEditor = monaco.editor.create($("input-editor"), {
   fontSize: 13,
 });
 const scriptEditor = monaco.editor.create($("script-editor"), {
-  value: DEFAULT_SCRIPT,
+  value: LOADING_SCRIPT,
   language: "dynoir",
   theme: "vs-dark",
   minimap: { enabled: false },
@@ -253,6 +256,11 @@ function settleRun() {
 }
 
 function runCompile() {
+  if (!flowSource) {
+    statusEl.textContent = "loading flow…";
+    statusEl.className = "status";
+    return;
+  }
   // Serialize runs: extra clicks are ignored until the current run settles.
   if (inFlight) {
     statusEl.textContent = "busy…";
@@ -344,11 +352,11 @@ function runCompile() {
 }
 
 function buildFlow(mode, pipelineKey) {
-  if (mode === "test") return FLOW_DYNO; // test block drives execution
+  if (mode === "test") return flowSource; // test block drives execution
   // Custom script contains the flow itself (prefilled with the whole flow).
   if (pipelineKey === "custom") return scriptEditor.getValue();
   const preset = PRESETS.find((p) => p.key === pipelineKey);
-  return FLOW_DYNO + "\n" + preset.runner;
+  return flowSource + "\n" + preset.runner;
 }
 
 // ---- Result handling -------------------------------------------------------
@@ -968,8 +976,128 @@ function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+const ANSI_CSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
 function stripAnsi(s) {
-  return s.replace(/\x1b\[[0-9;]*m/g, "");
+  return s.replace(ANSI_CSI_RE, "");
+}
+
+// ---- ANSI SGR -> HTML (terminal colors) ----------------------------------
+const ANSI_BASIC = [
+  "#000000", "#cc0000", "#4e9a06", "#c4a000",
+  "#3465a4", "#75507b", "#06989a", "#d3d7cf",
+];
+const ANSI_BRIGHT = [
+  "#555555", "#ef2929", "#8ae234", "#fce94f",
+  "#729fcf", "#ad7fa8", "#34e2e2", "#eeeeee",
+];
+const ANSI_256 = (() => {
+  const palette = [...ANSI_BASIC, ...ANSI_BRIGHT];
+  const levels = [0, 95, 135, 175, 215, 255];
+  for (let r = 0; r < 6; r++)
+    for (let g = 0; g < 6; g++)
+      for (let b = 0; b < 6; b++)
+        palette.push(`rgb(${levels[r]},${levels[g]},${levels[b]})`);
+  for (let i = 0; i < 24; i++) {
+    const v = 8 + i * 10;
+    palette.push(`rgb(${v},${v},${v})`);
+  }
+  return palette;
+})();
+
+function ansi256Color(idx) {
+  return Number.isInteger(idx) && idx >= 0 && idx < ANSI_256.length
+    ? ANSI_256[idx] : null;
+}
+
+function resetAnsi(state) {
+  state.bold = false;
+  state.dim = false;
+  state.italic = false;
+  state.underline = false;
+  state.blink = false;
+  state.inverse = false;
+  state.fg = null;
+  state.bg = null;
+}
+
+function applyAnsiSgr(state, params) {
+  const nums = params === "" ? [0] : params.split(";").map((p) => parseInt(p, 10));
+  for (let i = 0; i < nums.length; i++) {
+    const n = nums[i];
+    if (!Number.isFinite(n)) continue;
+    switch (n) {
+      case 0: resetAnsi(state); break;
+      case 1: state.bold = true; break;
+      case 2: state.dim = true; break;
+      case 3: state.italic = true; break;
+      case 4: state.underline = true; break;
+      case 5: state.blink = true; break;
+      case 7: state.inverse = true; break;
+      case 21: state.underline = true; break;
+      case 22: state.bold = false; state.dim = false; break;
+      case 23: state.italic = false; break;
+      case 24: state.underline = false; break;
+      case 25: state.blink = false; break;
+      case 27: state.inverse = false; break;
+      case 39: state.fg = null; break;
+      case 49: state.bg = null; break;
+      default:
+        if (n >= 30 && n <= 37) state.fg = ANSI_BASIC[n - 30];
+        else if (n >= 40 && n <= 47) state.bg = ANSI_BASIC[n - 40];
+        else if (n >= 90 && n <= 97) state.fg = ANSI_BRIGHT[n - 90];
+        else if (n >= 100 && n <= 107) state.bg = ANSI_BRIGHT[n - 100];
+        else if (n === 38 || n === 48) {
+          const target = n === 38 ? "fg" : "bg";
+          const mode = nums[i + 1];
+          if (mode === 5) {
+            const c = ansi256Color(nums[i + 2]);
+            if (c) state[target] = c;
+            i += 2;
+          } else if (mode === 2) {
+            const r = nums[i + 2], g = nums[i + 3], b = nums[i + 4];
+            if ([r, g, b].every(Number.isFinite))
+              state[target] = `rgb(${r},${g},${b})`;
+            i += 4;
+          }
+        }
+    }
+  }
+}
+
+function ansiStyle(state) {
+  const css = [];
+  if (state.bold) css.push("font-weight:700");
+  if (state.dim) css.push("opacity:.65");
+  if (state.italic) css.push("font-style:italic");
+  if (state.underline) css.push("text-decoration:underline");
+  if (state.blink) css.push("animation:ansi-blink 1s steps(2,start) infinite");
+  if (state.inverse) css.push("filter:invert(1)");
+  if (state.fg) css.push("color:" + state.fg);
+  if (state.bg) css.push("background:" + state.bg);
+  return css.join(";");
+}
+
+function ansiSpan(state, text) {
+  if (!text) return "";
+  const escaped = escapeHtml(text);
+  const style = ansiStyle(state);
+  return style ? `<span style="${style}">${escaped}</span>` : escaped;
+}
+
+function ansiToHtml(s) {
+  const state = {};
+  resetAnsi(state);
+  let out = "";
+  let pos = 0;
+  const re = /\x1b\[[0-9;?]*[A-Za-z]/g;
+  let m;
+  while ((m = re.exec(s))) {
+    if (m.index > pos) out += ansiSpan(state, s.slice(pos, m.index));
+    if (m[0].endsWith("m")) applyAnsiSgr(state, m[0].slice(2, -1));
+    pos = m.index + m[0].length;
+  }
+  if (pos < s.length) out += ansiSpan(state, s.slice(pos));
+  return out;
 }
 
 // Append a line as it streams in from the worker (the wasm call is synchronous,
@@ -977,7 +1105,7 @@ function stripAnsi(s) {
 function appendConsoleLine(stream, text) {
   const div = document.createElement("div");
   div.className = "c-line " + (stream === "stderr" ? "c-stderr" : "c-stdout");
-  div.textContent = stream === "stderr" ? stripAnsi(text) : text;
+  div.innerHTML = ansiToHtml(text);
   consoleBody.appendChild(div);
   while (consoleBody.childElementCount > MAX_LOG_LINES)
     consoleBody.removeChild(consoleBody.firstChild);
@@ -1018,7 +1146,7 @@ function renderConsole() {
   for (let i = start; i < lines.length; i++) {
     const { stream, text } = lines[i];
     const cls = stream === "stderr" ? "c-stderr" : "c-stdout";
-    const rendered = stream === "stderr" ? escapeHtml(stripAnsi(text)) : escapeHtml(text);
+    const rendered = ansiToHtml(text);
     parts.push('<div class="c-line ' + cls + '">' + rendered + "</div>");
   }
   consoleBody.innerHTML = parts.join("");
@@ -1262,17 +1390,40 @@ consoleBtn.addEventListener("click", () => {
 consoleClose.addEventListener("click", closeConsole);
 
 // ---- resizable columns ---------------------------------------------------
-// Drag a `.splitter` to resize the column before it in a flex row; the
-// before-column is locked to a pixel width and the rest flex to fill.
+const PANE_MIN = 140;
+
+function paneReservedWidth(el, min) {
+  const fixed = el.style.flexGrow === "0" && el.style.flexShrink === "0";
+  return fixed ? el.offsetWidth : min;
+}
+
+// Drag a `.splitter` to resize the column before it in a flex row.
 function makeSplitter(divider, beforeEl, minWidth) {
   divider.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
+    const panesEl = $("panes");
     const startX = e.clientX;
     const startW = beforeEl.offsetWidth;
-    const min = minWidth || 140;
+    const min = minWidth || PANE_MIN;
+
+    const visiblePanes = [...panesEl.querySelectorAll(".pane")].filter(
+      (el) => getComputedStyle(el).display !== "none"
+    );
+    const otherPanes = visiblePanes.filter((el) => el !== beforeEl);
+    const otherSplitters = [...panesEl.querySelectorAll(".splitter")].filter(
+      (el) => el !== divider && getComputedStyle(el).display !== "none"
+    );
+    const otherWidth = otherPanes.reduce(
+      (sum, el) => sum + paneReservedWidth(el, min), 0
+    ) + otherSplitters.reduce((sum, el) => sum + el.offsetWidth, 0);
+    const maxW = Math.max(
+      min,
+      panesEl.clientWidth - divider.offsetWidth - otherWidth
+    );
+
     const onMove = (ev) => {
-      const w = Math.max(min, startW + (ev.clientX - startX));
+      const w = Math.max(min, Math.min(maxW, startW + (ev.clientX - startX)));
       beforeEl.style.flexGrow = "0";
       beforeEl.style.flexShrink = "0";
       beforeEl.style.flexBasis = w + "px";
@@ -1300,8 +1451,22 @@ $("console-divider").addEventListener("mousedown", (e) => {
   e.preventDefault();
   const startX = e.clientX;
   const startW = consoleEl.offsetWidth;
+  const panesEl = $("panes");
+  const visiblePanes = [...panesEl.querySelectorAll(".pane")].filter(
+    (el) => getComputedStyle(el).display !== "none"
+  );
+  const visibleSplitters = [...panesEl.querySelectorAll(".splitter")].filter(
+    (el) => getComputedStyle(el).display !== "none"
+  );
+  const minPanes = visiblePanes.reduce(
+    (sum, el) => sum + paneReservedWidth(el, PANE_MIN), 0
+  ) + visibleSplitters.reduce((sum, el) => sum + el.offsetWidth, 0);
+  const maxConsole = Math.max(
+    220,
+    window.innerWidth - minPanes - $("console-divider").offsetWidth
+  );
   const onMove = (ev) => {
-    const w = Math.max(220, Math.min(startW + (startX - ev.clientX), window.innerWidth - 260));
+    const w = Math.max(220, Math.min(startW + (startX - ev.clientX), maxConsole));
     consoleEl.style.width = w + "px";
   };
   const onUp = () => {
@@ -1339,6 +1504,7 @@ window.__dyno = {
   setMode: (m) => { modeSelect.value = m; setInputMode(m); },
   setPipeline: (k) => { pipelineSelect.value = k; setScriptPaneVisible(k === "custom"); },
   get script() { return scriptEditor.getValue(); },
+  get flow() { return flowSource; },
   run: () => runCompile(),
   get status() { return statusEl.textContent; },
   get statusClass() { return statusEl.className; },
@@ -1360,6 +1526,8 @@ window.__dyno = {
   get consoleVisible() { return consoleOpen; },
   get diagCount() { return lastDiagCount; },
   parseDiagnostics: (t) => parseDiagnostics(t),
+  stripAnsi: (t) => stripAnsi(t),
+  ansiToHtml: (t) => ansiToHtml(t),
   getInputMarkers: () => {
     const model = inputEditor.getModel();
     return model ? monaco.editor.getModelMarkers({ resource: model.uri }) : [];
@@ -1428,8 +1596,24 @@ window.__dyno = {
 };
 
 // ---- Boot ----------------------------------------------------------------
-spawnWorker();
-// Honor the browser-restored mode-select value (a reload can restore "test"
-// without firing a change event).
-setInputMode(modeSelect.value);
-runCompile(); // populate the output
+async function loadFlowSource() {
+  const res = await fetch("flow.dyno", { cache: "no-cache" });
+  if (!res.ok) throw new Error("flow.dyno fetch failed: " + res.status);
+  flowSource = await res.text();
+  if (scriptEditor.getValue() === LOADING_SCRIPT)
+    scriptEditor.setValue(makeDefaultScript(flowSource));
+}
+
+async function boot() {
+  spawnWorker();
+  setInputMode(modeSelect.value);
+  try {
+    await loadFlowSource();
+    runCompile(); // populate the output
+  } catch (e) {
+    statusEl.textContent = "flow load error";
+    statusEl.className = "status err";
+    showError("Failed to load upstream flow.dyno: " + e.message);
+  }
+}
+boot();

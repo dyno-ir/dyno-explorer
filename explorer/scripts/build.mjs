@@ -38,6 +38,11 @@ await Promise.all([
 
 await copyFile(join(root, "index.html"), join(dist, "index.html"));
 
+await copyFile(
+  join(root, "..", "dyno", "tools", "dyno-opt", "dyno-ir", "flow.dyno"),
+  join(dist, "flow.dyno")
+);
+
 // Copy the wasm module (self-contained) into dist/wasm/.
 await mkdir(join(dist, "wasm"), { recursive: true });
 const wasmFiles = [

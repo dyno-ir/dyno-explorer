@@ -20,12 +20,13 @@ const wasm = await init({
   print: (line) => outLines.push(line),
 });
 
-const flow = readFileSync(join(root, 'flow', 'flow.dyno'), 'utf8');
+const flow = readFileSync(join(root, 'dyno', 'tools', 'dyno-opt', 'dyno-ir', 'flow.dyno'), 'utf8');
 const test = readFileSync(
   join(root, 'dyno', 'tools', 'dyno-test', 'dyno-ir', 'test.dyno'), 'utf8');
 
 wasm.ccall('dyno_run', 'void', ['string', 'string', 'string'], [flow, test, '']);
-const lines = outLines;
+const stripAnsi = (s) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+const lines = outLines.map(stripAnsi);
 const passed = lines.filter((l) => /^passed/.test(l)).length;
 const failed = lines.filter((l) => /^failed/.test(l)).length;
 console.log(`PASSED: ${passed}  FAILED: ${failed}`);

@@ -302,6 +302,17 @@ check("console can be closed", await page.evaluate(() => !window.__dyno.consoleV
 await page.evaluate(() => document.getElementById("console-btn").click());
 check("console can be reopened", await page.evaluate(() => window.__dyno.consoleVisible));
 
+const ansiRender = await page.evaluate(() =>
+  window.__dyno.ansiToHtml('\x1b[1m\x1b[32mpassed:\x1b[37m "x"\x1b[0m'));
+check("ANSI terminal colors render as styled spans",
+  ansiRender.includes("font-weight:700") &&
+  ansiRender.includes("color:#4e9a06") &&
+  ansiRender.includes("color:#d3d7cf") &&
+  !ansiRender.includes("\x1b"),
+  ansiRender);
+const ansiPlain = await page.evaluate(() => window.__dyno.stripAnsi('\x1b[31merror\x1b[0m'));
+check("stripAnsi removes ANSI escapes for diagnostics", ansiPlain === "error", JSON.stringify(ansiPlain));
+
 // editing the input clears stale squiggles
 await page.evaluate(() => window.__dyno.setInput(`MODULE_DEF :module("m"), :block {}`));
 await page.waitForFunction(() => window.__dyno.diagCount === 0, null, { timeout: 5000 });
@@ -475,6 +486,15 @@ check("graph hidden on IR stage",
   JSON.stringify(gIr));
 
 // ---- 13. frontend pipeline preset + custom script prefill + tooltips ----
+const flowAsset = await page.evaluate(async () =>
+  await (await fetch("flow.dyno")).text());
+const flowLoaded = await page.evaluate(() => window.__dyno.flow);
+check("flow source loaded from dist/flow.dyno (not embedded)",
+  flowAsset === flowLoaded &&
+  flowLoaded.includes("REMOVE_SIDE_EFFECT_INSTRS_PASS") &&
+  flowLoaded.includes('meta.ABC_PASS map("path"'),
+  `len=${flowLoaded.length}`);
+
 // frontend preset runs no synthesis passes (the SV is parsed by the harness)
 // and dumps a post_frontend.dyno stage.
 const frontPreset = await page.evaluate(() =>
@@ -545,6 +565,58 @@ check("instr tooltips come from HWInstrs.inc",
   !!tt.mux && /sel true_val false_val/.test(tt.mux),
   JSON.stringify(tt.mux));
 check("unknown names have no tooltip", tt.none === null, JSON.stringify(tt.none));
+
+// ---- 14. splitter clamping ----------------------------------------------
+async function dragSplitter(id, dx) {
+  const box = await page.locator("#" + id).boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + dx, box.y + box.height / 2, { steps: 20 });
+  await page.mouse.up();
+}
+const paneWidths = () => page.evaluate(() => ({
+  input: document.getElementById("input-pane").offsetWidth,
+  script: document.getElementById("script-pane").offsetWidth,
+  output: document.getElementById("output-pane").offsetWidth,
+}));
+await page.evaluate(() => {
+  window.__dyno.setMode("sv");
+  window.__dyno.setPipeline("custom");
+});
+await page.waitForTimeout(100);
+await dragSplitter("split-1", 1000);
+const clamp1 = await paneWidths();
+check("split-1 clamps flow pane to minimum width",
+  clamp1.input >= 140 && clamp1.script >= 140 && clamp1.output >= 140,
+  JSON.stringify(clamp1));
+await dragSplitter("split-1", -1000);
+const clamp2 = await paneWidths();
+check("split-1 clamps input pane to minimum width",
+  clamp2.input >= 140 && clamp2.script >= 140 && clamp2.output >= 140,
+  JSON.stringify(clamp2));
+await dragSplitter("split-2", 1000);
+const clamp3 = await paneWidths();
+check("split-2 clamps all panes to minimum width",
+  clamp3.input >= 140 && clamp3.script >= 140 && clamp3.output >= 140,
+  JSON.stringify(clamp3));
+await dragSplitter("split-2", -1000);
+const clamp4 = await paneWidths();
+check("split-2 cannot shrink flow pane below minimum",
+  clamp4.input >= 140 && clamp4.script >= 140 && clamp4.output >= 140,
+  JSON.stringify(clamp4));
+
+await dragSplitter("split-2", 1000);
+await dragSplitter("split-1", 1000);
+const clamp5 = await page.evaluate(() => ({
+  input: document.getElementById("input-pane").offsetWidth,
+  script: document.getElementById("script-pane").offsetWidth,
+  output: document.getElementById("output-pane").offsetWidth,
+  panes: document.getElementById("panes").clientWidth,
+}));
+check("split-1 respects a previously fixed pane (no overflow)",
+  clamp5.input >= 140 && clamp5.script >= 140 && clamp5.output >= 140 &&
+  clamp5.input + clamp5.script + clamp5.output <= clamp5.panes,
+  JSON.stringify(clamp5));
 
 await browser.close();
 server.close();

@@ -13,7 +13,7 @@ const outDir = process.argv[2] || join(root, 'wasm-sv');
 const { default: init } = await import(join(outDir, 'dyno-sv-wasm.js'));
 const wasm = await init({ locateFile: (p) => join(outDir, p) });
 
-const flow = readFileSync(join(root, 'flow', 'flow.dyno'), 'utf8');
+const flow = readFileSync(join(root, 'dyno', 'tools', 'dyno-opt', 'dyno-ir', 'flow.dyno'), 'utf8');
 const runner = '\nCALL symbol("flow_completeFlow")\n'; // full flow, ends at techmap
 const input = `
 module Test#(parameter N = 8)

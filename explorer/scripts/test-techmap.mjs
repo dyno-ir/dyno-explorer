@@ -109,6 +109,12 @@ const vlog = await page.evaluate(() => ({
   text: window.__dyno.output,
   lang: window.__dyno.outputLanguage,
 }));
+
+const consoleHtml = await page.evaluate(() =>
+  document.getElementById("console-body").innerHTML);
+if (!/style="[^"]*color:/.test(consoleHtml))
+  throw new Error("console did not render ANSI colors: " + consoleHtml.slice(0, 200));
+console.log("console ANSI color spans: yes");
 const vMarkers = (() => {
   const c = (re) => (vlog.text.match(re) || []).length;
   return { module: c(/^module /gm), endmodule: c(/endmodule/g), assign: c(/^assign /gm), inst: c(/sky130_fd_sc_hd__/g) };

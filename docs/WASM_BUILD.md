@@ -5,13 +5,13 @@ Goal: compile Dyno (an HDL compiler/IR tool) to WebAssembly so the test suite
 style "dyno explorer".
 
 **Status: complete.** `dyno-sv test flow.dyno test.dyno` (the build that links
-slang) compiles to wasm32 and **all 36 tests pass** under node, including the
+slang) compiles to wasm32 and **all 40 tests pass** under node, including the
 slang `PARSE_VERILOG_PASS` cases and the memory-synthesis tests that read
 stdcell files.
 
 ```
 $ node tools/run-sv.js
-PASSED: 36  FAILED: 0
+PASSED: 40  FAILED: 0
 ```
 
 ## Why wasm32?
@@ -98,15 +98,17 @@ API (`abc::Cmd_CommandExecute`) — no subprocess, no external binary.
   this support is already in dyno's clean mainline. The sky130 liberty file is
   preloaded into MEMFS so ABC's `read_lib` works (`compile-lib-test.mjs`
   verifies it reads the library and maps to sky130 stdcells).
-- The wasm flow (`flow/flow.dyno`, a copy of dyno's mainline `flow.dyno`) maps
-  `%synthTechmap` to sky130 stdcells (`read_lib` of the preloaded liberty
-  before `if`). Its `${liberty-path}` placeholder is substituted with the
-  ABC_PASS `path` by `ABC.h` before the in-process call.
+- The wasm flow uses Dyno's upstream `dyno/tools/dyno-opt/dyno-ir/flow.dyno`
+  directly (no separately maintained copy). It maps `%synthTechmap` to sky130
+  stdcells. The pass uses ABC's default `abcCmd`, which runs
+  `read_lib -w ${liberty-path}` before `if`; `ABC.h` substitutes the
+  `${liberty-path}` placeholder with the ABC_PASS `path` before the in-process
+  call.
 
 ### C. Run the tests (node)
 
 ```sh
-node tools/run-sv.js [OUTPUT_DIR]             # 36-test suite (PASSED: 36 FAILED: 0)
+node tools/run-sv.js [OUTPUT_DIR]             # 40-test suite (PASSED: 40 FAILED: 0)
 node tools/compile-test.mjs [OUTPUT_DIR]      # full flow through ABC (post_techmap)
 node tools/compile-lib-test.mjs [OUTPUT_DIR]  # ABC reads the sky130 liberty
 # any modern node (>= 18) works; the emsdk-bundled one is used if the system
@@ -221,7 +223,9 @@ a hard crash or timeout.
   `dyno-wasm.cpp` was superseded and removed.
 - `tools/run-sv.js`, `compile-test.mjs`, `compile-lib-test.mjs` — node runners.
 - `CMakeLists.txt` — builds `dyno-sv-wasm` (slang + in-process ABC + dyno-as-library).
-- `flow/flow.dyno` — the wasm-specific synthesis flow (ABC `read_lib`).
+- `dyno/tools/dyno-opt/dyno-ir/flow.dyno` — Dyno's upstream synthesis flow.
+  The explorer build copies it to `explorer/dist/flow.dyno`; the app fetches it
+  at boot, so presets.js contains only runners and no hardcoded flow snapshot.
 - `include/support/ArrayRef.h` — `using uint` under `_LIBCPP_VERSION`.
 - `include/support/SmallVec.h` — `std::array::data()` (raw pointer) for
   `CexprVec`/`StaticVec` iterators (libc++-compat; also correct on libstdc++).

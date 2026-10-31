@@ -103,9 +103,10 @@ them into spans. Hovering/clicking highlights + scrolls to the input line.
   and bundled into `dist/` by esbuild.
 - `scripts/build.mjs` bundles the app + workers and **copies the wasm module
   into `dist/wasm/`**, so `dist/` is a fully self-contained static site.
-- Preset definitions: each maps to a flow script string = `flow.dyno` +
-  runner that `CALL`s the relevant function (or `%completeFlow`) and a selected
-  output stage.
+- Preset definitions: each maps to a flow script string = Dyno's upstream
+  `flow.dyno` + a runner that `CALL`s the relevant function(s) and dumps the
+  selected stage. The upstream flow is copied to `dist/flow.dyno` by the build
+  and fetched at boot; `presets.js` contains only the runners, not a flow copy.
 - Source-loc linking logic in `src/app.js`.
 - Test mode: builds a test script from the input pane, calls `dyno_run`, shows
   results.
@@ -117,20 +118,23 @@ them into spans. Hovering/clicking highlights + scrolls to the input line.
 
 Derived from `%completeFlow`'s `DUMP_PASS` calls:
 
-| Preset | flow runner | shows stage |
-|--------|-------------|-------------|
-| Early canonical | `CALL flow_earlyCanonFlow` | post_early_canon.dyno |
-| Canonicalize | `CALL flow_synthCanonicalize` | post_canon.dyno |
-| Early opt | `CALL flow_synthEarlyOpt` | post_early_opt.dyno |
-| Lower control flow | `CALL flow_synthLowerControlFlow` | post_lower_cfg.dyno |
-| Memory/FF mux | `CALL flow_synthMemoryFFMuxHandling` | post_memory_mux.dyno |
-| Lower memory/FF | `CALL flow_synthLowerMemoryFF` | post_lower_memory.dyno | Techmap | `CALL flow_synthTechmap` | post_techmap.dyno |
-| Full flow | `CALL flow_completeFlow` | all stages (selector) |
+| Preset | flow runner (cumulative) | shows stage |
+|--------|--------------------------|-------------|
+| Frontend | `DUMP_PASS` only (SV already parsed by harness) | post_frontend.dyno |
+| Early canonical | `CALL flow_earlyCanonFlow` + `DUMP_PASS` | post_early_canon.dyno |
+| Canonicalize | early canon + `CALL flow_synthCanonicalize` + `DUMP_PASS` | post_canon.dyno |
+| Early opt | canonicalize + `CALL flow_synthEarlyOpt` + `DUMP_PASS` | post_early_opt.dyno |
+| Lower control flow | early opt + `CALL flow_synthLowerControlFlow` + `DUMP_PASS` | post_lower_cfg.dyno |
+| Memory/FF mux | lower CFG + `CALL flow_synthMemoryFFMuxHandling` + `DUMP_PASS` | post_memory_mux.dyno |
+| Lower memory/FF | memory/FF mux + `CALL flow_synthLowerMemoryFF` + `DUMP_PASS` | post_lower_memory.dyno |
+| Techmap | lower memory/FF + `CALL flow_synthTechmap` + `DUMP_PASS` | post_techmap.dyno (+ `.dot`, `dump.v`) |
+| Custom / full flow | `CALL flow_completeFlow` | all stages (selector) |
 
-To show a stage that is *not* the final dump of its function, the runner calls
-the function(s) and then `DUMP_PASS map("path":"/out.dyno")`, and the frontend
-reads `/out.dyno`. (Simpler: run `%completeFlow` once and show whatever file
-the stage name implies — no runner reconstruction needed.)
+Each preset runner calls the flow functions up to its stage and then adds a
+`DUMP_PASS` for that stage (the current `flow.dyno` only dumps inside
+`%completeFlow`). The frontend reads the resulting MEMFS files. The custom
+script preset uses the whole flow and `CALL flow_completeFlow`, which emits all
+stage dumps.
 
 ## Error handling (garbage input)
 
@@ -179,7 +183,7 @@ All planned features are implemented and tested in the browser:
   helper. See `explorer/README.md` for the ABI.
 - `CMakeLists.txt` — builds `dyno-sv-wasm` (slang + in-process ABC + dyno-as-library); exports `_dyno_compile`.
 - `explorer/` — Monaco-based UI (input / output / script panes), presets
-  generated from `flow/flow.dyno`, source-loc linking, and a Web Worker that runs
+  generated from Dyno's upstream `dyno/tools/dyno-opt/dyno-ir/flow.dyno`, source-loc linking, and a Web Worker that runs
   dyno with crash/timeout isolation. `scripts/build.mjs` produces a fully
   self-contained `dist/` (bundled app + copied wasm in `dist/wasm/`) that is
   served by any static server.
@@ -196,9 +200,8 @@ All planned features are implemented and tested in the browser:
   (`STDCELL_INSTANCE` to `sky130_fd_sc_hd__*` cells) in the browser — see
   `explorer/scripts/test-techmap.mjs`.
 
-  The `%synthTechmap` abcCmd in `flow.dyno` maps to sky130 stdcells (`read_lib`
-  of the preloaded sky130 liberty before `if`), matching the intended sky130
-  flow in `flow.dyno`'s history (the original default abcCmd in `ABC.h`). The
-  `${liberty-path}` placeholder is substituted with `config.path` at runtime.
-- Each preset runs its own partial pipeline (up to its stage) and dumps
-  `out.dyno`; this keeps later-stage crashes from losing earlier-stage output.
+  The upstream `%synthTechmap` uses `ABC_PASS`'s default `abcCmd`, which runs
+  `read_lib -w ${liberty-path}` before `if`, matching the intended sky130 flow.
+  `ABC.h` substitutes `${liberty-path}` with the ABC_PASS `path` at runtime.
+- Each preset runs its own partial pipeline (up to its stage) and dumps that
+  stage file; this keeps later-stage crashes from losing earlier-stage output.

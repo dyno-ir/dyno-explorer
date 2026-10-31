@@ -1,48 +1,106 @@
-// Regenerate explorer/src/presets.js from flow/flow.dyno. The preset runners
-// (which flow_* functions each stage calls) are static; only FLOW_DYNO (the flow
-// library snapshot) is refreshed.
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, "..", "..");
-const flowPath = join(root, "flow", "flow.dyno");
 const outPath = join(here, "..", "src", "presets.js");
 
-const flow = readFileSync(flowPath, "utf8");
-// Escape for embedding in a template literal: backslash, backtick, and "${"
-// (flow.dyno's abcCmd uses ${liberty-path}, substituted by ABC.h at runtime).
-const escapedFlow = flow
-  .replace(/\\/g, "\\\\")
-  .replace(/\$/g, "\\$")
-  .replace(/`/g, "\\`");
+const stagePresets = [
+  {
+    key: "post_early_canon",
+    label: "post_early_canon",
+    calls: ["flow_earlyCanonFlow"],
+    dump: "post_early_canon.dyno",
+  },
+  {
+    key: "post_canon",
+    label: "post_canon",
+    calls: ["flow_earlyCanonFlow", "flow_synthCanonicalize"],
+    dump: "post_canon.dyno",
+  },
+  {
+    key: "post_early_opt",
+    label: "post_early_opt",
+    calls: ["flow_earlyCanonFlow", "flow_synthCanonicalize", "flow_synthEarlyOpt"],
+    dump: "post_early_opt.dyno",
+  },
+  {
+    key: "post_lower_cfg",
+    label: "post_lower_cfg",
+    calls: [
+      "flow_earlyCanonFlow",
+      "flow_synthCanonicalize",
+      "flow_synthEarlyOpt",
+      "flow_synthLowerControlFlow",
+    ],
+    dump: "post_lower_cfg.dyno",
+  },
+  {
+    key: "post_memory_mux",
+    label: "post_memory_mux",
+    calls: [
+      "flow_earlyCanonFlow",
+      "flow_synthCanonicalize",
+      "flow_synthEarlyOpt",
+      "flow_synthLowerControlFlow",
+      "flow_synthMemoryFFMuxHandling",
+    ],
+    dump: "post_memory_mux.dyno",
+  },
+  {
+    key: "post_lower_memory",
+    label: "post_lower_memory",
+    calls: [
+      "flow_earlyCanonFlow",
+      "flow_synthCanonicalize",
+      "flow_synthEarlyOpt",
+      "flow_synthLowerControlFlow",
+      "flow_synthMemoryFFMuxHandling",
+      "flow_synthLowerMemoryFF",
+    ],
+    dump: "post_lower_memory.dyno",
+  },
+  {
+    key: "post_techmap",
+    label: "post_techmap",
+    calls: [
+      "flow_earlyCanonFlow",
+      "flow_synthCanonicalize",
+      "flow_synthEarlyOpt",
+      "flow_synthLowerControlFlow",
+      "flow_synthMemoryFFMuxHandling",
+      "flow_synthLowerMemoryFF",
+      "flow_synthTechmap",
+    ],
+    dump: "post_techmap.dyno",
+    extra: [
+      'DUMP_DOT_PASS map("path": "post_techmap.dot")',
+      'DUMP_VERILOG_PASS map("fileName": "dump.v")',
+    ],
+  },
+];
 
-// Static preset definitions (runners call the exported flow_* functions).
 const presets = [
-  { key: "frontend", label: "frontend",
-    runner: 'CALL symbol("flow_frontend")' },
-  { key: "post_early_canon", label: "post_early_canon",
-    runner: 'CALL symbol("flow_earlyCanonFlow")' },
-  { key: "post_canon", label: "post_canon",
-    runner: 'CALL symbol("flow_earlyCanonFlow")\nCALL symbol("flow_synthCanonicalize")' },
-  { key: "post_early_opt", label: "post_early_opt",
-    runner: 'CALL symbol("flow_earlyCanonFlow")\nCALL symbol("flow_synthCanonicalize")\nCALL symbol("flow_synthEarlyOpt")' },
-  { key: "post_lower_cfg", label: "post_lower_cfg",
-    runner: 'CALL symbol("flow_earlyCanonFlow")\nCALL symbol("flow_synthCanonicalize")\nCALL symbol("flow_synthEarlyOpt")\nCALL symbol("flow_synthLowerControlFlow")' },
-  { key: "post_memory_mux", label: "post_memory_mux",
-    runner: 'CALL symbol("flow_earlyCanonFlow")\nCALL symbol("flow_synthCanonicalize")\nCALL symbol("flow_synthEarlyOpt")\nCALL symbol("flow_synthLowerControlFlow")\nCALL symbol("flow_synthMemoryFFMuxHandling")' },
-  { key: "post_lower_memory", label: "post_lower_memory",
-    runner: 'CALL symbol("flow_earlyCanonFlow")\nCALL symbol("flow_synthCanonicalize")\nCALL symbol("flow_synthEarlyOpt")\nCALL symbol("flow_synthLowerControlFlow")\nCALL symbol("flow_synthMemoryFFMuxHandling")\nCALL symbol("flow_synthLowerMemoryFF")' },
-  { key: "post_techmap", label: "post_techmap",
-    runner: 'CALL symbol("flow_earlyCanonFlow")\nCALL symbol("flow_synthCanonicalize")\nCALL symbol("flow_synthEarlyOpt")\nCALL symbol("flow_synthLowerControlFlow")\nCALL symbol("flow_synthMemoryFFMuxHandling")\nCALL symbol("flow_synthLowerMemoryFF")\nCALL symbol("flow_synthTechmap")\nDUMP_VERILOG_PASS map("fileName": "dump.v")' },
+  // SV input is already parsed by the harness.
+  {
+    key: "frontend",
+    label: "frontend",
+    runner: 'DUMP_PASS map("path": "post_frontend.dyno")',
+  },
+  ...stagePresets.map((p) => {
+    const runner = [
+      ...p.calls.map((name) => `CALL symbol("${name}")`),
+      `DUMP_PASS map("path": "${p.dump}")`,
+      ...(p.extra || []),
+    ].join("\n");
+    return { key: p.key, label: p.label, runner };
+  }),
 ];
 
 const out =
-  "// Generated presets. FLOW_DYNO is the contents of flow/flow.dyno.\n" +
+  "// Generated preset runners.\n" +
   "// Regenerate with: node scripts/gen-presets.mjs\n" +
-  "export const FLOW_DYNO = `" + escapedFlow + "`;\n\n" +
   "export const PRESETS = " + JSON.stringify(presets, null, 2) + ";\n";
 
 writeFileSync(outPath, out);
-console.log("wrote", outPath, "(" + flow.length + " chars of flow)");
+console.log("wrote", outPath);
