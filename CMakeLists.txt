@@ -122,7 +122,7 @@ target_link_options(dyno-sv-wasm PRIVATE
     -sSTACK_SIZE=67108864 -sINITIAL_MEMORY=134217728
     -sMODULARIZE=1 -sEXPORT_ES6=1 -sASSERTIONS=1
     -sFORCE_FILESYSTEM=1
-    -sEXPORTED_FUNCTIONS=_dyno_run,_dyno_compile,_malloc,_free
+    -sEXPORTED_FUNCTIONS=_dyno_run,_malloc,_free
     -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToUTF8,lengthBytesUTF8,FS
 )
 
