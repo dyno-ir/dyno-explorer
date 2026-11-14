@@ -13,36 +13,14 @@ const outDir = process.argv[2] || join(root, 'wasm-sv');
 const { default: init } = await import(join(outDir, 'dyno-sv-wasm.js'));
 const wasm = await init({ locateFile: (p) => join(outDir, p) });
 
-const flow = readFileSync(join(root, 'flow', 'flow.dyno'), 'utf8');
-
-// Swap %synthTechmap's ABC_PASS abcCmd for one that reads the sky130 liberty
-// (standard-cell mapping) before running `if`.
-const abcCmd =
-  'read_blif aig.blif; read_lib -X sky130_fd_sc_hd__lpflow_inputiso1p_1 -X ' +
-  'sky130_fd_sc_hd__lpflow_isobufsrc_1 -X sky130_fd_sc_hd__clkinv_1 ' +
-  '-w sky130_fd_sc_hd__tt_025C_1v80.lib; strash; &get -n; &fraig -x; ' +
-  '&put; scorr; dc2; dretime; strash; &get -n; &dch -f; &nf; &put; ' +
-  'print_stats; write_blif mapped.blif';
-
-// Text-replace the ABC_PASS abcCmd block with the stdcell version.
-const techmapMarker = 'meta.ABC_PASS map("abcCmd":';
-const idx = flow.indexOf(techmapMarker);
-if (idx < 0) throw new Error('ABC_PASS block not found in flow');
-let depth = 0, end = -1;
-for (let i = idx; i < flow.length; i++) {
-  const c = flow[i];
-  if (c === '[' || c === '(' || c === '{') depth++;
-  else if (c === ']' || c === ')' || c === '}') { depth--; if (depth === 0) { end = i; break; } }
-}
-const before = flow.slice(0, idx);
-const after = flow.slice(end + 1);
-const runner = '\nCALL symbol("flow_completeFlow")\n';
-const newFlow =
-  before +
-  'meta.ABC_PASS map("abcCmd":\n' +
-  '  [{' + abcCmd + '}],\n' +
-  '  "path": "sky130_fd_sc_hd__tt_025C_1v80.lib")\n' +
-  after + runner;
+const flow = readFileSync(join(root, 'dyno', 'tools', 'dyno-opt', 'dyno-ir', 'flow.dyno'), 'utf8');
+const runner = `
+CALL symbol("flow_completeFlow_generic")
+meta.PARSE_DYNO_PASS map("path": "/tools/dyno-opt/dyno-ir/sky130_fd_sc_hd.dyno", "newModulesActive": "0")
+meta.PARSE_DYNO_PASS map("path": "/tools/dyno-opt/dyno-ir/example_memories.dyno", "newModulesActive": "0")
+meta.POPULATE_INLINE_CACHES_PASS
+CALL symbol("flow_completeFlow_tgt_specific")
+`;
 
 const input = `
 module Test(input logic clk, input logic rst, output logic[3:0] o);
@@ -52,15 +30,17 @@ assign o = c;
 endmodule
 `;
 
-wasm.ccall('dyno_compile', 'void',
-          ['string', 'string', 'string', 'string'],
-          [newFlow, input, 'sv', '']);
-const stages = readStages(wasm); // stage files are read back from the exported MEMFS
+try { wasm.FS.stat('/input'); } catch { wasm.FS.mkdir('/input'); }
+wasm.FS.writeFile('/input/flow.dyno', flow + runner);
+wasm.FS.writeFile('/input/design.sv', input);
+wasm.ccall('dyno_run', 'void', ['string'], [
+  'synth -s /input/flow.dyno -l /sky130_fd_sc_hd__tt_025C_1v80.lib /input/design.sv',
+]);
+const stages = readStages(wasm);
 console.log('stages:', JSON.stringify(stages.map((s) => s.name)));
 
 const tech = stages.find((s) => s.name.endsWith('post_techmap.dyno'));
 if (!tech) { console.error('FAIL: techmap stage missing'); process.exit(1); }
-// A standard-cell mapping produces .gate lines referencing sky130 cells.
 if (/sky130_fd_sc_hd__/.test(tech.text) || /\.gate /.test(tech.text)) {
   console.log('OK: ABC read the sky130 liberty (stdcell mapping present)');
 } else {

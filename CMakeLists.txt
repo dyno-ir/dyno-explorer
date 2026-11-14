@@ -41,6 +41,15 @@ add_compile_definitions(DYNO_ENABLE_DEBUG=1)
 # ---- Dyno mainline as a library (unmodified submodule) ----------------------
 add_subdirectory(dyno/lib)
 
+# Explorer-only in-process ABC; native dyno keeps the shell yosys-abc path.
+target_compile_definitions(core PRIVATE
+    DYNO_USE_ABC ABC_NAMESPACE=abc ABC_USE_STDINT_H=1)
+target_include_directories(core PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/abc/src)
+# ABC headers expect abc_namespaces.h first.
+target_compile_options(core PRIVATE
+    -include ${CMAKE_CURRENT_SOURCE_DIR}/third-party/abc/src/misc/util/abc_namespaces.h)
+
 # ---- slang (SystemVerilog parser) built from the dyno submodule -------------
 set(SLANG_USE_MIMALLOC OFF CACHE BOOL "" FORCE)
 set(SLANG_USE_THREADS OFF CACHE BOOL "" FORCE)
@@ -113,7 +122,7 @@ target_link_options(dyno-sv-wasm PRIVATE
     -sSTACK_SIZE=67108864 -sINITIAL_MEMORY=134217728
     -sMODULARIZE=1 -sEXPORT_ES6=1 -sASSERTIONS=1
     -sFORCE_FILESYSTEM=1
-    -sEXPORTED_FUNCTIONS=_dyno_run,_dyno_compile,_malloc,_free
+    -sEXPORTED_FUNCTIONS=_dyno_run,_malloc,_free
     -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToUTF8,lengthBytesUTF8,FS
 )
 

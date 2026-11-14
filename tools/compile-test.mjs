@@ -1,6 +1,7 @@
-// Node smoke test for dyno_compile: runs the full flow.dyno pipeline (incl.
-// the in-process ABC/techmap stage) over a counter design and checks the
-// techmap stage is produced.
+// Node smoke test for dyno_run: runs the full flow.dyno pipeline (incl. the
+// in-process ABC/techmap stage) over a counter design and checks the techmap
+// stage is produced. Files are written into the wasm MEMFS and passed as a
+// normal dyno-sv command line.
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -13,8 +14,14 @@ const outDir = process.argv[2] || join(root, 'wasm-sv');
 const { default: init } = await import(join(outDir, 'dyno-sv-wasm.js'));
 const wasm = await init({ locateFile: (p) => join(outDir, p) });
 
-const flow = readFileSync(join(root, 'flow', 'flow.dyno'), 'utf8');
-const runner = '\nCALL symbol("flow_completeFlow")\n'; // full flow, ends at techmap
+const flow = readFileSync(join(root, 'dyno', 'tools', 'dyno-opt', 'dyno-ir', 'flow.dyno'), 'utf8');
+const runner = `
+CALL symbol("flow_completeFlow_generic")
+meta.PARSE_DYNO_PASS map("path": "/tools/dyno-opt/dyno-ir/sky130_fd_sc_hd.dyno", "newModulesActive": "0")
+meta.PARSE_DYNO_PASS map("path": "/tools/dyno-opt/dyno-ir/example_memories.dyno", "newModulesActive": "0")
+meta.POPULATE_INLINE_CACHES_PASS
+CALL symbol("flow_completeFlow_tgt_specific")
+`;
 const input = `
 module Test#(parameter N = 8)
 (
@@ -32,17 +39,19 @@ assign OUT_cnt = cnt;
 endmodule
 `;
 
-wasm.ccall('dyno_compile', 'void',
-          ['string', 'string', 'string', 'string'],
-          [flow + runner, input, 'sv', '']);
-const stages = readStages(wasm); // stage files are read back from the exported MEMFS
+try { wasm.FS.stat('/input'); } catch { wasm.FS.mkdir('/input'); }
+wasm.FS.writeFile('/input/flow.dyno', flow + runner);
+wasm.FS.writeFile('/input/design.sv', input);
+wasm.ccall('dyno_run', 'void', ['string'], [
+  'synth -s /input/flow.dyno -l /sky130_fd_sc_hd__tt_025C_1v80.lib /input/design.sv',
+]);
+const stages = readStages(wasm);
 const stageNames = stages.map((s) => s.name);
 console.log('stages:', JSON.stringify(stageNames, null, 1));
-const outDyno = stages.find((s) => s.name === 'out.dyno');
-console.log('out.dyno IR bytes:', outDyno ? outDyno.text.length : 0);
-const tech = stageNames.find((n) => n.endsWith('post_techmap.dyno'));
+const tech = stages.find((s) => s.name === 'post_techmap.dyno');
 if (!tech) {
   console.error('FAIL: post_techmap.dyno stage missing (ABC/techmap did not run)');
   process.exit(1);
 }
+console.log('post_techmap.dyno IR bytes:', tech.text.length);
 console.log('OK: post_techmap.dyno present -> ABC (in-process) ran');

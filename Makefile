@@ -19,7 +19,7 @@ OUT_DIR     := wasm-sv
 # Build the dyno-sv-wasm module (slang + in-process ABC + dyno-as-library).
 # emcmake/em++ must be on PATH; source the Emscripten SDK if not already there.
 wasm:
-	@if ! command -v emcmake >/dev/null 2>&1; then source "$(EMSDK)/emsdk_env.sh" >/dev/null 2>&1; fi; \
+	@if [ -f "$(EMSDK)/emsdk_env.sh" ]; then source "$(EMSDK)/emsdk_env.sh" >/dev/null 2>&1; fi; \
 	CCACHE_LAUNCHER="$$(command -v ccache >/dev/null 2>&1 && echo "-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache" || true)"; \
 	emcmake cmake -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Release $$CCACHE_LAUNCHER && \
 	cmake --build $(BUILD_DIR) --target dyno-sv-wasm -j"$$(nproc)" && \

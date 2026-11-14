@@ -13,7 +13,7 @@ git submodule update --init --recursive
 
 # 2. Build the dyno-sv-wasm module (slang + in-process ABC + dyno-as-library)
 source /opt/emsdk/emsdk_env.sh        # or set EMSDK=/path/to/emsdk
-make wasm                             # -> wasm-sv/dyno-sv-wasm.{js,wasm,data}
+make wasm                             # -> wasm-sv/dyno-sv-wasm.{js,wasm,data,wasm.map}
 
 # 3. Bundle the frontend and copy the wasm into dist/
 make site                             # -> explorer/dist/ (self-contained)
